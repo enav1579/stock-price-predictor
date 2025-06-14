@@ -1,0 +1,15 @@
+streamlit
+pandas
+numpy
+yfinance
+plotly
+scikit-learn
+peewee
+pyinstaller>=6.4.0
+fastapi
+uvicorn
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+--only-binary :all: 
