@@ -138,14 +138,9 @@ def get_financial_data(ticker):
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
-        # Ensure the index is datetime and sort by date
-        data.index = pd.to_datetime(data.index)
+        # Convert index to datetime with explicit format
+        data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
         data = data.sort_index()
-        
-        # Reset the index to ensure proper datetime handling
-        data = data.reset_index()
-        data['Date'] = pd.to_datetime(data['Date'])
-        data = data.set_index('Date')
         
         st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
         return data
@@ -157,51 +152,60 @@ def get_financial_data(ticker):
 def calculate_indicators(data):
     """Calculate technical indicators for the stock data"""
     try:
+        # Make a copy to avoid modifying the original data
+        df = data.copy()
+        
         # Price-based features
-        data['Returns'] = data['Close'].pct_change()
-        data['Log_Returns'] = np.log(data['Close']/data['Close'].shift(1))
-        data['Volatility'] = data['Returns'].rolling(window=20).std()
+        df['Returns'] = df['Close'].pct_change()
+        df['Log_Returns'] = np.log(df['Close']/df['Close'].shift(1))
+        df['Volatility'] = df['Returns'].rolling(window=20).std()
         
         # Moving Averages
-        data['SMA_20'] = data['Close'].rolling(window=20).mean()
-        data['SMA_50'] = data['Close'].rolling(window=50).mean()
-        data['SMA_200'] = data['Close'].rolling(window=200).mean()
-        data['EMA_12'] = data['Close'].ewm(span=12, adjust=False).mean()
-        data['EMA_26'] = data['Close'].ewm(span=26, adjust=False).mean()
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['SMA_50'] = df['Close'].rolling(window=50).mean()
+        df['SMA_200'] = df['Close'].rolling(window=200).mean()
+        df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
+        df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
         
         # Price to MA ratios
-        data['Price_to_SMA20'] = data['Close'] / data['SMA_20']
-        data['Price_to_SMA50'] = data['Close'] / data['SMA_50']
-        data['Price_to_SMA200'] = data['Close'] / data['SMA_200']
+        df['Price_to_SMA20'] = df['Close'] / df['SMA_20']
+        df['Price_to_SMA50'] = df['Close'] / df['SMA_50']
+        df['Price_to_SMA200'] = df['Close'] / df['SMA_200']
         
         # RSI
-        delta = data['Close'].diff()
+        delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
-        data['RSI'] = 100 - (100 / (1 + rs))
+        df['RSI'] = 100 - (100 / (1 + rs))
         
         # MACD
-        data['MACD'] = data['EMA_12'] - data['EMA_26']
-        data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
-        data['MACD_Hist'] = data['MACD'] - data['MACD_Signal']
+        df['MACD'] = df['EMA_12'] - df['EMA_26']
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
         
         # Bollinger Bands
-        data['BB_Middle'] = data['Close'].rolling(window=20).mean()
-        data['BB_Std'] = data['Close'].rolling(window=20).std()
-        data['BB_Upper'] = data['BB_Middle'] + (data['BB_Std'] * 2)
-        data['BB_Lower'] = data['BB_Middle'] - (data['BB_Std'] * 2)
+        df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+        df['BB_Std'] = df['Close'].rolling(window=20).std()
+        df['BB_Upper'] = df['BB_Middle'] + (df['BB_Std'] * 2)
+        df['BB_Lower'] = df['BB_Middle'] - (df['BB_Std'] * 2)
         
         # Volume indicators
-        data['Volume_MA'] = data['Volume'].rolling(window=20).mean()
-        data['Volume_Ratio'] = data['Volume'] / data['Volume_MA']
-        data['Volume_Change'] = data['Volume'].pct_change()
+        df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
+        df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
+        df['Volume_Change'] = df['Volume'].pct_change()
         
         # Price momentum
-        data['Momentum'] = data['Close'] - data['Close'].shift(10)
-        data['Rate_of_Change'] = data['Close'].pct_change(periods=10)
+        df['Momentum'] = df['Close'] - df['Close'].shift(10)
+        df['Rate_of_Change'] = df['Close'].pct_change(periods=10)
         
-        return data
+        # Additional features
+        df['High_Low_Ratio'] = df['High'] / df['Low']
+        df['Close_Open_Ratio'] = df['Close'] / df['Open']
+        df['Price_Range'] = df['High'] - df['Low']
+        df['Price_Range_Pct'] = df['Price_Range'] / df['Close']
+        
+        return df
         
     except Exception as e:
         st.error(f"Error calculating indicators: {str(e)}")
@@ -214,11 +218,8 @@ def prepare_data(data):
             st.error("No data available for preparation")
             return None, None, None
             
-        # Make a copy to avoid modifying the original data
-        df = data.copy()
-        
         # Calculate technical indicators
-        df = calculate_indicators(df)
+        df = calculate_indicators(data)
         
         # Create target variable (next day's closing price)
         df['Target'] = df['Close'].shift(-1)
@@ -236,7 +237,9 @@ def prepare_data(data):
             'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist',
             'BB_Middle', 'BB_Upper', 'BB_Lower',
             'Volume_MA', 'Volume_Ratio', 'Volume_Change',
-            'Momentum', 'Rate_of_Change'
+            'Momentum', 'Rate_of_Change',
+            'High_Low_Ratio', 'Close_Open_Ratio',
+            'Price_Range', 'Price_Range_Pct'
         ]
         
         X = df[features]
@@ -256,13 +259,15 @@ def train_model(X, y):
         
         # Create and train the model with optimized parameters
         model = RandomForestRegressor(
-            n_estimators=200,
-            max_depth=10,
+            n_estimators=500,
+            max_depth=15,
             min_samples_split=5,
             min_samples_leaf=2,
             max_features='sqrt',
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
+            bootstrap=True,
+            oob_score=True
         )
         
         model.fit(X_train, y_train)
