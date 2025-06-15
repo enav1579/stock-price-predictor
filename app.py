@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, mean_squared_error, r2_score
 import time
 from functools import wraps
 from sklearn.preprocessing import MinMaxScaler
@@ -151,22 +151,49 @@ def get_financial_data(ticker):
 def calculate_indicators(data):
     """Calculate technical indicators for the stock data"""
     try:
-        # Calculate Simple Moving Averages
+        # Price-based features
+        data['Returns'] = data['Close'].pct_change()
+        data['Log_Returns'] = np.log(data['Close']/data['Close'].shift(1))
+        data['Volatility'] = data['Returns'].rolling(window=20).std()
+        
+        # Moving Averages
         data['SMA_20'] = data['Close'].rolling(window=20).mean()
         data['SMA_50'] = data['Close'].rolling(window=50).mean()
+        data['SMA_200'] = data['Close'].rolling(window=200).mean()
+        data['EMA_12'] = data['Close'].ewm(span=12, adjust=False).mean()
+        data['EMA_26'] = data['Close'].ewm(span=26, adjust=False).mean()
         
-        # Calculate RSI
+        # Price to MA ratios
+        data['Price_to_SMA20'] = data['Close'] / data['SMA_20']
+        data['Price_to_SMA50'] = data['Close'] / data['SMA_50']
+        data['Price_to_SMA200'] = data['Close'] / data['SMA_200']
+        
+        # RSI
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         data['RSI'] = 100 - (100 / (1 + rs))
         
-        # Calculate MACD
-        exp1 = data['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = data['Close'].ewm(span=26, adjust=False).mean()
-        data['MACD'] = exp1 - exp2
+        # MACD
+        data['MACD'] = data['EMA_12'] - data['EMA_26']
         data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+        data['MACD_Hist'] = data['MACD'] - data['MACD_Signal']
+        
+        # Bollinger Bands
+        data['BB_Middle'] = data['Close'].rolling(window=20).mean()
+        data['BB_Std'] = data['Close'].rolling(window=20).std()
+        data['BB_Upper'] = data['BB_Middle'] + (data['BB_Std'] * 2)
+        data['BB_Lower'] = data['BB_Middle'] - (data['BB_Std'] * 2)
+        
+        # Volume indicators
+        data['Volume_MA'] = data['Volume'].rolling(window=20).mean()
+        data['Volume_Ratio'] = data['Volume'] / data['Volume_MA']
+        data['Volume_Change'] = data['Volume'].pct_change()
+        
+        # Price momentum
+        data['Momentum'] = data['Close'] - data['Close'].shift(10)
+        data['Rate_of_Change'] = data['Close'].pct_change(periods=10)
         
         return data
         
@@ -191,8 +218,17 @@ def prepare_data(data):
         data = data.dropna()
         
         # Select features for training
-        features = ['Open', 'High', 'Low', 'Close', 'Volume', 
-                   'SMA_20', 'SMA_50', 'RSI', 'MACD', 'MACD_Signal']
+        features = [
+            'Open', 'High', 'Low', 'Close', 'Volume',
+            'Returns', 'Log_Returns', 'Volatility',
+            'SMA_20', 'SMA_50', 'SMA_200',
+            'EMA_12', 'EMA_26',
+            'Price_to_SMA20', 'Price_to_SMA50', 'Price_to_SMA200',
+            'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist',
+            'BB_Middle', 'BB_Upper', 'BB_Lower',
+            'Volume_MA', 'Volume_Ratio', 'Volume_Change',
+            'Momentum', 'Rate_of_Change'
+        ]
         
         X = data[features]
         y = data['Target']
@@ -204,54 +240,39 @@ def prepare_data(data):
         return None, None, None
 
 def train_model(X, y):
-    """Train the model with validation"""
+    """Train the model with improved parameters"""
     try:
-        if X is None or y is None:
-            st.error("No data available for training")
-            return None
-            
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Split the data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
         
-        # Train model
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        # Create and train the model with optimized parameters
+        model = RandomForestRegressor(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            max_features='sqrt',
+            random_state=42,
+            n_jobs=-1
+        )
+        
         model.fit(X_train, y_train)
         
-        # Evaluate model
-        train_score = model.score(X_train, y_train)
-        test_score = model.score(X_test, y_test)
+        # Make predictions
+        train_pred = model.predict(X_train)
+        test_pred = model.predict(X_test)
         
-        # Calculate predictions for the last 30 days
-        last_30_days = X.iloc[-30:]
-        actual_prices = y.iloc[-30:]
-        predicted_prices = model.predict(last_30_days)
+        # Calculate metrics
+        train_rmse = np.sqrt(mean_squared_error(y_train, train_pred))
+        test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
+        train_r2 = r2_score(y_train, train_pred)
+        test_r2 = r2_score(y_test, test_pred)
         
-        # Calculate performance metrics
-        mae = mean_absolute_error(actual_prices, predicted_prices)
-        mape = mean_absolute_percentage_error(actual_prices, predicted_prices) * 100
-        actual_direction = np.diff(actual_prices)
-        predicted_direction = np.diff(predicted_prices)
-        directional_accuracy = np.mean((actual_direction > 0) == (predicted_direction > 0)) * 100
-        
-        # Store metrics in model object for later use
-        model.metrics = {
-            'train_score': train_score,
-            'test_score': test_score,
-            'mae': mae,
-            'mape': mape,
-            'directional_accuracy': directional_accuracy,
-            'last_30_days': {
-                'dates': X.index[-30:],
-                'actual': actual_prices,
-                'predicted': predicted_prices
-            }
-        }
-        
-        return model
+        return model, train_rmse, test_rmse, train_r2, test_r2
         
     except Exception as e:
         st.error(f"Error training model: {str(e)}")
-        return None
+        return None, None, None, None, None
 
 def display_financial_metrics(ticker, quarters, statement_type="income"):
     """Display financial metrics with improved error handling"""
@@ -526,7 +547,7 @@ def main():
                 return
                 
             # Train model
-            model = train_model(X, y)
+            model, train_rmse, test_rmse, train_r2, test_r2 = train_model(X, y)
             if model is None:
                 st.error("Error training prediction model")
                 return
@@ -559,34 +580,32 @@ def main():
             st.markdown("### Model Fit Metrics")
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Training R² Score", f"{model.metrics['train_score']:.2%}")
+                st.metric("Training R² Score", f"{train_r2:.2%}")
             with col2:
-                st.metric("Test R² Score", f"{model.metrics['test_score']:.2%}")
+                st.metric("Test R² Score", f"{test_r2:.2%}")
             
             # Display prediction accuracy metrics
             st.markdown("### Prediction Accuracy (Last 30 Days)")
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Mean Absolute Error", f"${model.metrics['mae']:.2f}")
+                st.metric("Mean Absolute Error", f"${train_rmse:.2f}")
             with col2:
-                st.metric("Mean Absolute Percentage Error", f"{model.metrics['mape']:.2f}%")
-            with col3:
-                st.metric("Directional Accuracy", f"{model.metrics['directional_accuracy']:.2f}%")
+                st.metric("Mean Absolute Percentage Error", f"{test_rmse:.2f}%")
             
             # Plot actual vs predicted prices
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
             fig = go.Figure()
             
             fig.add_trace(go.Scatter(
-                x=model.metrics['last_30_days']['dates'],
-                y=model.metrics['last_30_days']['actual'],
+                x=data.index[-30:],
+                y=data['Close'][-30:],
                 name='Actual Price',
                 line=dict(color='#1E88E5', width=2)
             ))
             
             fig.add_trace(go.Scatter(
-                x=model.metrics['last_30_days']['dates'],
-                y=model.metrics['last_30_days']['predicted'],
+                x=data.index[-30:],
+                y=model.predict(X[-30:]),
                 name='Predicted Price',
                 line=dict(color='#FFA726', width=2, dash='dash')
             ))
