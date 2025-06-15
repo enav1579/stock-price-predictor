@@ -129,14 +129,17 @@ def get_financial_data(ticker):
         # Get historical data
         end_date = datetime.now()
         start_date = end_date - timedelta(days=20*365)  # 20 years
-        data = stock.history(start=start_date, end=end_date)
+        
+        # Fetch data with explicit date range
+        data = stock.history(start=start_date.strftime('%Y-%m-%d'), 
+                           end=end_date.strftime('%Y-%m-%d'))
         
         if data.empty:
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
         # Ensure the index is datetime
-        data.index = pd.to_datetime(data.index)
+        data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
         
         st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
         return data
