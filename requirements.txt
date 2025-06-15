@@ -1,7 +1,7 @@
 streamlit
 pandas
 numpy
-yfinance==0.2.63
+yfinance==0.2.28
 plotly
 scikit-learn
 pyinstaller>=6.4.0
@@ -10,5 +10,4 @@ uvicorn
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
-python-dotenv
---only-binary :all: 
+python-dotenv 
