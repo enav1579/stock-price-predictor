@@ -106,11 +106,12 @@ def get_stock_data(ticker):
         # Fetch historical data
         stock = yf.Ticker(ticker)
         data = stock.history(start=start_date, end=end_date)
-        
+        print(f"[DEBUG] Raw data for {ticker}:")
+        print(data)
         if data.empty:
-            st.error(f"No historical data found for {ticker}")
+            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
-            
+        
         # Get company info to check IPO date
         info = stock.info
         if 'firstTradeDateEpochUtc' in info:
@@ -123,11 +124,11 @@ def get_stock_data(ticker):
                 st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
         else:
             st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-            
-        return data
         
+        return data
     except Exception as e:
-        st.error(f"Error fetching stock data: {str(e)}")
+        st.error(f"Error fetching data for {ticker}: {e}")
+        print(f"[DEBUG] Exception for {ticker}: {e}")
         return None
 
 def prepare_data(data):
