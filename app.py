@@ -97,7 +97,7 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data with improved error handling"""
+    """Get historical stock data with improved error handling and rate limiting"""
     try:
         # Calculate date range (20 years ago from today)
         end_date = datetime.now()
@@ -106,25 +106,45 @@ def get_stock_data(ticker):
         # Fetch historical data
         stock = yf.Ticker(ticker)
         
-        # First try to get company info
-        try:
-            info = stock.info
-            if not info:
-                st.error(f"Could not fetch company information for {ticker}. Please check the symbol.")
-                return None
-        except Exception as e:
-            st.error(f"Error fetching company information for {ticker}: {str(e)}")
-            return None
+        # First try to get company info with retry logic
+        max_retries = 3
+        retry_delay = 2  # seconds
         
-        # Try to fetch historical data
-        try:
-            data = stock.history(period="20y")  # Use period instead of start/end dates
-            if data.empty:
-                st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
-                return None
-        except Exception as e:
-            st.error(f"Error fetching historical data for {ticker}: {str(e)}")
-            return None
+        for attempt in range(max_retries):
+            try:
+                info = stock.info
+                if not info:
+                    st.error(f"Could not fetch company information for {ticker}. Please check the symbol.")
+                    return None
+                break  # If successful, break the retry loop
+            except Exception as e:
+                if "429" in str(e) and attempt < max_retries - 1:
+                    # If we hit rate limit and have retries left, wait and try again
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    st.error(f"Error fetching company information for {ticker}: {str(e)}")
+                    return None
+        
+        # Try to fetch historical data with retry logic
+        retry_delay = 2  # Reset delay for historical data
+        for attempt in range(max_retries):
+            try:
+                data = stock.history(period="20y")  # Use period instead of start/end dates
+                if data.empty:
+                    st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
+                    return None
+                break  # If successful, break the retry loop
+            except Exception as e:
+                if "429" in str(e) and attempt < max_retries - 1:
+                    # If we hit rate limit and have retries left, wait and try again
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    st.error(f"Error fetching historical data for {ticker}: {str(e)}")
+                    return None
         
         # Get company info to check IPO date
         if 'firstTradeDateEpochUtc' in info:
