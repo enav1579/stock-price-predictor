@@ -121,51 +121,54 @@ def get_stock_data(ticker):
         print(f"[DEBUG] Exception for {ticker}: {str(e)}")
         return None
 
-def prepare_data(data):
-    """Prepare data for model training with validation"""
+def get_financial_data(ticker):
+    """Fetch and combine financial statements"""
     try:
-        if data is None or data.empty:
-            st.error("No data available for preparation")
-            return None, None
+        stock = yf.Ticker(ticker)
+        
+        # Get historical data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=20*365)  # 20 years
+        data = stock.history(start=start_date, end=end_date)
+        
+        if data.empty:
+            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
+            return None
             
-        # Create features
-        df = pd.DataFrame(index=data.index)
+        # Ensure the index is datetime
+        data.index = pd.to_datetime(data.index)
         
-        # Price features
-        df['returns'] = data['Close'].pct_change()
-        df['log_returns'] = np.log(data['Close']/data['Close'].shift(1))
-        df['volatility'] = df['returns'].rolling(window=20).std()
+        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
+        return data
         
-        # Volume features
-        df['volume_ma'] = data['Volume'].rolling(window=20).mean()
-        df['volume_std'] = data['Volume'].rolling(window=20).std()
-        df['volume_ratio'] = data['Volume'] / df['volume_ma']
+    except Exception as e:
+        st.error(f"Error fetching financial data: {str(e)}")
+        return None
+
+def prepare_data(data):
+    """Prepare data for model training"""
+    try:
+        # Calculate technical indicators
+        data = calculate_indicators(data)
         
-        # Technical indicators
-        df['rsi'] = calculate_rsi(data['Close'])
-        df['macd'], df['macd_signal'] = calculate_macd(data['Close'])
-        
-        # Price levels
-        df['sma_20'] = data['Close'].rolling(window=20).mean()
-        df['sma_50'] = data['Close'].rolling(window=50).mean()
-        df['price_to_sma20'] = data['Close'] / df['sma_20']
-        df['price_to_sma50'] = data['Close'] / df['sma_50']
-        
-        # Target variable (next day's return)
-        df['target'] = df['returns'].shift(-1)
+        # Create target variable (next day's closing price)
+        data['Target'] = data['Close'].shift(-1)
         
         # Drop rows with NaN values
-        df = df.dropna()
+        data = data.dropna()
         
-        # Split features and target
-        X = df.drop('target', axis=1)
-        y = df['target']
+        # Select features for training
+        features = ['Open', 'High', 'Low', 'Close', 'Volume', 
+                   'SMA_20', 'SMA_50', 'RSI', 'MACD', 'MACD_Signal']
         
-        return X, y
+        X = data[features]
+        y = data['Target']
+        
+        return X, y, data
         
     except Exception as e:
         st.error(f"Error preparing data: {str(e)}")
-        return None, None
+        return None, None, None
 
 def train_model(X, y):
     """Train the model with validation"""
@@ -427,27 +430,6 @@ def get_next_trading_day(last_date):
         next_day += timedelta(days=1)
     return next_day
 
-def get_financial_data(ticker):
-    """Fetch and combine financial statements"""
-    try:
-        stock = yf.Ticker(ticker)
-        
-        # Get historical data
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=20*365)  # 20 years
-        data = stock.history(start=start_date, end=end_date)
-        
-        if data.empty:
-            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
-            return None
-            
-        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-        return data
-        
-    except Exception as e:
-        st.error(f"Error fetching financial data: {str(e)}")
-        return None
-
 def main():
     """Main function with improved error handling"""
     try:
@@ -505,7 +487,7 @@ def main():
                 return
                 
             # Prepare data
-            X, y = prepare_data(data)
+            X, y, data = prepare_data(data)
             if X is None or y is None:
                 st.error("Error preparing data for analysis")
                 return
