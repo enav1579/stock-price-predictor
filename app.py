@@ -99,87 +99,33 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data using direct API calls"""
+    """Fetch historical stock data for the given ticker."""
     try:
-        # Calculate date range (20 years ago from today)
+        # Calculate date range for last 20 years
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=20*365)  # 20 years
+        start_date = end_date - timedelta(days=365*20)
         
-        # Convert dates to timestamps
-        start_timestamp = int(start_date.timestamp())
-        end_timestamp = int(end_date.timestamp())
+        # Get stock data
+        stock = yf.Ticker(ticker)
+        data = stock.history(start=start_date, end=end_date)
         
-        # Fetch historical data with retry logic
-        max_retries = 3
-        retry_delay = 2  # seconds
+        if data.empty:
+            raise ValueError(f"No data found for {ticker}")
+            
+        # Get company info
+        info = stock.info
+        company_name = info.get('longName', ticker)
+        sector = info.get('sector', 'N/A')
+        industry = info.get('industry', 'N/A')
         
-        for attempt in range(max_retries):
-            try:
-                # Construct Yahoo Finance API URL
-                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_timestamp}&period2={end_timestamp}&interval=1d"
-                
-                # Add headers to mimic browser request
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                
-                # Make the request
-                response = requests.get(url, headers=headers)
-                response.raise_for_status()  # Raise an exception for bad status codes
-                
-                # Parse the JSON response
-                data = response.json()
-                
-                if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
-                    result = data['chart']['result'][0]
-                    
-                    # Extract timestamps and prices
-                    timestamps = result['timestamp']
-                    quotes = result['indicators']['quote'][0]
-                    
-                    # Create DataFrame
-                    df = pd.DataFrame({
-                        'Date': pd.to_datetime(timestamps, unit='s'),
-                        'Open': quotes['open'],
-                        'High': quotes['high'],
-                        'Low': quotes['low'],
-                        'Close': quotes['close'],
-                        'Volume': quotes['volume']
-                    })
-                    
-                    # Set Date as index
-                    df.set_index('Date', inplace=True)
-                    
-                    # Drop rows with NaN values
-                    df.dropna(inplace=True)
-                    
-                    if not df.empty:
-                        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-                        return df
-                    else:
-                        st.error(f"No valid data found for {ticker}. Please check the symbol or try again later.")
-                        return None
-                else:
-                    st.error(f"No data found for {ticker}. Please check the symbol or try again later.")
-                    return None
-                    
-            except requests.exceptions.RequestException as e:
-                if attempt < max_retries - 1:
-                    # If we have retries left, wait and try again
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    continue
-                else:
-                    st.error(f"Error fetching data for {ticker}: {str(e)}")
-                    return None
-            except Exception as e:
-                st.error(f"Error processing data for {ticker}: {str(e)}")
-                return None
-        
-        return None
+        return {
+            'data': data,
+            'company_name': company_name,
+            'sector': sector,
+            'industry': industry
+        }
     except Exception as e:
         st.error(f"Error fetching data for {ticker}: {str(e)}")
-        print(f"[DEBUG] Exception for {ticker}: {str(e)}")
         return None
 
 def prepare_data(data):
@@ -561,7 +507,7 @@ def main():
                 return
                 
             # Prepare data
-            X, y = prepare_data(data)
+            X, y = prepare_data(data['data'])
             if X is None or y is None:
                 st.error("Error preparing data for analysis")
                 return
@@ -575,14 +521,14 @@ def main():
             # Make prediction
             last_data = X.iloc[-1:].copy()
             prediction = model.predict(last_data)[0]
-            current_price = data['Close'].iloc[-1]
+            current_price = data['data']['Close'].iloc[-1]
             predicted_price = current_price * (1 + prediction)
             
             # Display prediction
             st.markdown('<div class="prediction-header"><h2>Price Prediction</h2></div>', unsafe_allow_html=True)
             
             # Display prediction date
-            next_trading_day = get_next_trading_day(data.index[-1])
+            next_trading_day = get_next_trading_day(data['data'].index[-1])
             st.markdown(f'<div class="info-box">Prediction is for {next_trading_day.strftime("%Y-%m-%d")}</div>', unsafe_allow_html=True)
             
             col1, col2, col3 = st.columns(3)
