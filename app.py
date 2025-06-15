@@ -12,6 +12,11 @@ from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error,
 import time
 from functools import wraps
 from sklearn.preprocessing import MinMaxScaler
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Set page configuration - must be the first Streamlit command
 st.set_page_config(
@@ -124,43 +129,63 @@ def get_stock_data(ticker):
 def get_financial_data(ticker):
     """Fetch and combine financial statements"""
     try:
+        logger.debug(f"Fetching data for ticker: {ticker}")
         stock = yf.Ticker(ticker)
         
         # Get historical data
         end_date = datetime.now()
         start_date = end_date - timedelta(days=20*365)  # 20 years
         
+        logger.debug(f"Date range: {start_date} to {end_date}")
+        
         # Fetch data with explicit date range
         data = stock.history(start=start_date.strftime('%Y-%m-%d'), 
                            end=end_date.strftime('%Y-%m-%d'))
         
+        logger.debug(f"Data shape: {data.shape}")
+        logger.debug(f"Data columns: {data.columns.tolist()}")
+        logger.debug(f"Data index type: {type(data.index)}")
+        
         if data.empty:
+            logger.error(f"No data found for {ticker}")
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
         # Convert index to datetime with explicit format
-        data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
+        try:
+            data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
+            logger.debug("Successfully converted index to datetime")
+        except Exception as e:
+            logger.error(f"Error converting index to datetime: {str(e)}")
+            st.error(f"Error processing dates: {str(e)}")
+            return None
+            
         data = data.sort_index()
+        logger.debug(f"Data after sorting: {data.head()}")
         
         st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
         return data
         
     except Exception as e:
+        logger.error(f"Error in get_financial_data: {str(e)}", exc_info=True)
         st.error(f"Error fetching financial data: {str(e)}")
         return None
 
 def calculate_indicators(data):
     """Calculate technical indicators for the stock data"""
     try:
+        logger.debug("Starting indicator calculation")
         # Make a copy to avoid modifying the original data
         df = data.copy()
         
         # Price-based features
+        logger.debug("Calculating price-based features")
         df['Returns'] = df['Close'].pct_change()
         df['Log_Returns'] = np.log(df['Close']/df['Close'].shift(1))
         df['Volatility'] = df['Returns'].rolling(window=20).std()
         
         # Moving Averages
+        logger.debug("Calculating moving averages")
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_200'] = df['Close'].rolling(window=200).mean()
@@ -168,11 +193,13 @@ def calculate_indicators(data):
         df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
         
         # Price to MA ratios
+        logger.debug("Calculating price to MA ratios")
         df['Price_to_SMA20'] = df['Close'] / df['SMA_20']
         df['Price_to_SMA50'] = df['Close'] / df['SMA_50']
         df['Price_to_SMA200'] = df['Close'] / df['SMA_200']
         
         # RSI
+        logger.debug("Calculating RSI")
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -180,52 +207,65 @@ def calculate_indicators(data):
         df['RSI'] = 100 - (100 / (1 + rs))
         
         # MACD
+        logger.debug("Calculating MACD")
         df['MACD'] = df['EMA_12'] - df['EMA_26']
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
         
         # Bollinger Bands
+        logger.debug("Calculating Bollinger Bands")
         df['BB_Middle'] = df['Close'].rolling(window=20).mean()
         df['BB_Std'] = df['Close'].rolling(window=20).std()
         df['BB_Upper'] = df['BB_Middle'] + (df['BB_Std'] * 2)
         df['BB_Lower'] = df['BB_Middle'] - (df['BB_Std'] * 2)
         
         # Volume indicators
+        logger.debug("Calculating volume indicators")
         df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
         df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
         df['Volume_Change'] = df['Volume'].pct_change()
         
         # Price momentum
+        logger.debug("Calculating price momentum")
         df['Momentum'] = df['Close'] - df['Close'].shift(10)
         df['Rate_of_Change'] = df['Close'].pct_change(periods=10)
         
         # Additional features
+        logger.debug("Calculating additional features")
         df['High_Low_Ratio'] = df['High'] / df['Low']
         df['Close_Open_Ratio'] = df['Close'] / df['Open']
         df['Price_Range'] = df['High'] - df['Low']
         df['Price_Range_Pct'] = df['Price_Range'] / df['Close']
         
+        logger.debug("Indicator calculation completed")
         return df
         
     except Exception as e:
+        logger.error(f"Error in calculate_indicators: {str(e)}", exc_info=True)
         st.error(f"Error calculating indicators: {str(e)}")
         return data
 
 def prepare_data(data):
     """Prepare data for model training"""
     try:
+        logger.debug("Starting data preparation")
         if data is None or data.empty:
+            logger.error("No data available for preparation")
             st.error("No data available for preparation")
             return None, None, None
             
         # Calculate technical indicators
+        logger.debug("Calculating technical indicators")
         df = calculate_indicators(data)
         
         # Create target variable (next day's closing price)
+        logger.debug("Creating target variable")
         df['Target'] = df['Close'].shift(-1)
         
         # Drop rows with NaN values
+        logger.debug("Dropping NaN values")
         df = df.dropna()
+        logger.debug(f"Data shape after dropping NaN: {df.shape}")
         
         # Select features for training
         features = [
@@ -242,20 +282,25 @@ def prepare_data(data):
             'Price_Range', 'Price_Range_Pct'
         ]
         
+        logger.debug(f"Selected features: {features}")
         X = df[features]
         y = df['Target']
         
+        logger.debug(f"Final data shapes - X: {X.shape}, y: {y.shape}")
         return X, y, df
         
     except Exception as e:
+        logger.error(f"Error in prepare_data: {str(e)}", exc_info=True)
         st.error(f"Error preparing data: {str(e)}")
         return None, None, None
 
 def train_model(X, y):
     """Train the model with improved parameters"""
     try:
+        logger.debug("Starting model training")
         # Split the data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        logger.debug(f"Train/test split - X_train: {X_train.shape}, X_test: {X_test.shape}")
         
         # Create and train the model with optimized parameters
         model = RandomForestRegressor(
@@ -270,21 +315,28 @@ def train_model(X, y):
             oob_score=True
         )
         
+        logger.debug("Fitting model")
         model.fit(X_train, y_train)
         
         # Make predictions
+        logger.debug("Making predictions")
         train_pred = model.predict(X_train)
         test_pred = model.predict(X_test)
         
         # Calculate metrics
+        logger.debug("Calculating metrics")
         train_rmse = np.sqrt(mean_squared_error(y_train, train_pred))
         test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
         train_r2 = r2_score(y_train, train_pred)
         test_r2 = r2_score(y_test, test_pred)
         
+        logger.debug(f"Model metrics - Train RMSE: {train_rmse:.2f}, Test RMSE: {test_rmse:.2f}")
+        logger.debug(f"Model metrics - Train R²: {train_r2:.2f}, Test R²: {test_r2:.2f}")
+        
         return model, train_rmse, test_rmse, train_r2, test_r2
         
     except Exception as e:
+        logger.error(f"Error in train_model: {str(e)}", exc_info=True)
         st.error(f"Error training model: {str(e)}")
         return None, None, None, None, None
 
