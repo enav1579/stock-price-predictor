@@ -103,40 +103,20 @@ def get_stock_data(ticker):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=20*365)  # 20 years
         
-        # Fetch historical data
-        stock = yf.Ticker(ticker)
-        
-        # First try to get company info with retry logic
+        # Fetch historical data directly first
         max_retries = 3
         retry_delay = 2  # seconds
         
         for attempt in range(max_retries):
             try:
-                info = stock.info
-                # Only check if info is None, not if it's empty
-                if info is None:
-                    st.error(f"Could not fetch company information for {ticker}. Please check the symbol.")
-                    return None
-                break  # If successful, break the retry loop
-            except Exception as e:
-                if "429" in str(e) and attempt < max_retries - 1:
-                    # If we hit rate limit and have retries left, wait and try again
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    continue
+                # Try to get historical data first
+                data = yf.download(ticker, period="20y", progress=False)
+                if not data.empty:
+                    st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
+                    return data
                 else:
-                    st.error(f"Error fetching company information for {ticker}: {str(e)}")
-                    return None
-        
-        # Try to fetch historical data with retry logic
-        retry_delay = 2  # Reset delay for historical data
-        for attempt in range(max_retries):
-            try:
-                data = stock.history(period="20y")  # Use period instead of start/end dates
-                if data.empty:
                     st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
                     return None
-                break  # If successful, break the retry loop
             except Exception as e:
                 if "429" in str(e) and attempt < max_retries - 1:
                     # If we hit rate limit and have retries left, wait and try again
@@ -144,22 +124,10 @@ def get_stock_data(ticker):
                     retry_delay *= 2  # Exponential backoff
                     continue
                 else:
-                    st.error(f"Error fetching historical data for {ticker}: {str(e)}")
+                    st.error(f"Error fetching data for {ticker}: {str(e)}")
                     return None
         
-        # Get company info to check IPO date
-        if info and 'firstTradeDateEpochUtc' in info:
-            ipo_date = datetime.fromtimestamp(info['firstTradeDateEpochUtc'])
-            if ipo_date > start_date:
-                # If company is newer than 20 years, fetch from IPO date
-                data = stock.history(start=ipo_date, end=end_date)
-                st.info(f"Showing data from {ipo_date.strftime('%Y-%m-%d')} (Company IPO date)")
-            else:
-                st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-        else:
-            st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-        
-        return data
+        return None
     except Exception as e:
         st.error(f"Error fetching data for {ticker}: {str(e)}")
         print(f"[DEBUG] Exception for {ticker}: {str(e)}")
