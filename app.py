@@ -113,7 +113,8 @@ def get_stock_data(ticker):
         for attempt in range(max_retries):
             try:
                 info = stock.info
-                if not info:
+                # Only check if info is None, not if it's empty
+                if info is None:
                     st.error(f"Could not fetch company information for {ticker}. Please check the symbol.")
                     return None
                 break  # If successful, break the retry loop
@@ -147,7 +148,7 @@ def get_stock_data(ticker):
                     return None
         
         # Get company info to check IPO date
-        if 'firstTradeDateEpochUtc' in info:
+        if info and 'firstTradeDateEpochUtc' in info:
             ipo_date = datetime.fromtimestamp(info['firstTradeDateEpochUtc'])
             if ipo_date > start_date:
                 # If company is newer than 20 years, fetch from IPO date
