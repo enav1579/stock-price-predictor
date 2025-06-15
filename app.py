@@ -138,8 +138,14 @@ def get_financial_data(ticker):
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
-        # Ensure the index is datetime
-        data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
+        # Ensure the index is datetime and sort by date
+        data.index = pd.to_datetime(data.index)
+        data = data.sort_index()
+        
+        # Reset the index to ensure proper datetime handling
+        data = data.reset_index()
+        data['Date'] = pd.to_datetime(data['Date'])
+        data = data.set_index('Date')
         
         st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
         return data
@@ -208,14 +214,17 @@ def prepare_data(data):
             st.error("No data available for preparation")
             return None, None, None
             
+        # Make a copy to avoid modifying the original data
+        df = data.copy()
+        
         # Calculate technical indicators
-        data = calculate_indicators(data)
+        df = calculate_indicators(df)
         
         # Create target variable (next day's closing price)
-        data['Target'] = data['Close'].shift(-1)
+        df['Target'] = df['Close'].shift(-1)
         
         # Drop rows with NaN values
-        data = data.dropna()
+        df = df.dropna()
         
         # Select features for training
         features = [
@@ -230,10 +239,10 @@ def prepare_data(data):
             'Momentum', 'Rate_of_Change'
         ]
         
-        X = data[features]
-        y = data['Target']
+        X = df[features]
+        y = df['Target']
         
-        return X, y, data
+        return X, y, df
         
     except Exception as e:
         st.error(f"Error preparing data: {str(e)}")
