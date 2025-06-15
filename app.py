@@ -104,26 +104,37 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data using yfinance"""
+    """Fetch historical stock data"""
     try:
-        # Calculate date range (20 years ago from today)
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=20*365)  # 20 years
-        
-        # Get stock data
+        logger.debug(f"Fetching data for ticker: {ticker}")
         stock = yf.Ticker(ticker)
-        data = stock.history(start=start_date, end=end_date)
+        
+        # Get historical data for the past 5 years
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=5*365)
+        
+        logger.debug(f"Date range: {start_date} to {end_date}")
+        
+        data = stock.history(start=start_date.strftime('%Y-%m-%d'), 
+                           end=end_date.strftime('%Y-%m-%d'))
         
         if data.empty:
-            st.error(f"No data found for {ticker}. Please check the symbol or try again later.")
+            logger.error(f"No data found for {ticker}")
+            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
-        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
+        # Convert index to datetime
+        data.index = pd.to_datetime(data.index)
+        data = data.sort_index()
+        
+        logger.debug(f"Data shape: {data.shape}")
+        logger.debug(f"Data columns: {data.columns.tolist()}")
+        
         return data
         
     except Exception as e:
-        st.error(f"Error fetching data for {ticker}: {str(e)}")
-        print(f"[DEBUG] Exception for {ticker}: {str(e)}")
+        logger.error(f"Error in get_stock_data: {str(e)}", exc_info=True)
+        st.error(f"Error fetching stock data: {str(e)}")
         return None
 
 def get_financial_data(ticker):
@@ -251,38 +262,44 @@ def prepare_data(data):
         logger.debug("Starting data preparation")
         if data is None or data.empty:
             logger.error("No data available for preparation")
-            st.error("No data available for preparation")
-            return None, None, None
+            return None, None
             
-        # Calculate technical indicators
-        logger.debug("Calculating technical indicators")
-        df = calculate_indicators(data)
+        # Create features
+        df = data.copy()
         
-        # Create target variable (next day's closing price)
-        logger.debug("Creating target variable")
+        # Basic price features
+        df['Returns'] = df['Close'].pct_change()
+        df['Log_Returns'] = np.log(df['Close']/df['Close'].shift(1))
+        
+        # Moving averages
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['SMA_50'] = df['Close'].rolling(window=50).mean()
+        df['SMA_200'] = df['Close'].rolling(window=200).mean()
+        
+        # Volatility
+        df['Volatility'] = df['Returns'].rolling(window=20).std()
+        
+        # Volume features
+        df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
+        df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
+        
+        # Price momentum
+        df['Momentum'] = df['Close'] - df['Close'].shift(10)
+        
+        # Target variable (next day's closing price)
         df['Target'] = df['Close'].shift(-1)
         
         # Drop rows with NaN values
-        logger.debug("Dropping NaN values")
         df = df.dropna()
-        logger.debug(f"Data shape after dropping NaN: {df.shape}")
         
         # Select features for training
         features = [
             'Open', 'High', 'Low', 'Close', 'Volume',
             'Returns', 'Log_Returns', 'Volatility',
             'SMA_20', 'SMA_50', 'SMA_200',
-            'EMA_12', 'EMA_26',
-            'Price_to_SMA20', 'Price_to_SMA50', 'Price_to_SMA200',
-            'RSI', 'MACD', 'MACD_Signal', 'MACD_Hist',
-            'BB_Middle', 'BB_Upper', 'BB_Lower',
-            'Volume_MA', 'Volume_Ratio', 'Volume_Change',
-            'Momentum', 'Rate_of_Change',
-            'High_Low_Ratio', 'Close_Open_Ratio',
-            'Price_Range', 'Price_Range_Pct'
+            'Volume_MA', 'Volume_Ratio', 'Momentum'
         ]
         
-        logger.debug(f"Selected features: {features}")
         X = df[features]
         y = df['Target']
         
@@ -295,36 +312,28 @@ def prepare_data(data):
         return None, None, None
 
 def train_model(X, y):
-    """Train the model with improved parameters"""
+    """Train the model"""
     try:
         logger.debug("Starting model training")
         # Split the data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-        logger.debug(f"Train/test split - X_train: {X_train.shape}, X_test: {X_test.shape}")
         
-        # Create and train the model with optimized parameters
+        # Create and train the model
         model = RandomForestRegressor(
-            n_estimators=500,
-            max_depth=15,
+            n_estimators=200,
+            max_depth=10,
             min_samples_split=5,
             min_samples_leaf=2,
-            max_features='sqrt',
-            random_state=42,
-            n_jobs=-1,
-            bootstrap=True,
-            oob_score=True
+            random_state=42
         )
         
-        logger.debug("Fitting model")
         model.fit(X_train, y_train)
         
         # Make predictions
-        logger.debug("Making predictions")
         train_pred = model.predict(X_train)
         test_pred = model.predict(X_test)
         
         # Calculate metrics
-        logger.debug("Calculating metrics")
         train_rmse = np.sqrt(mean_squared_error(y_train, train_pred))
         test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
         train_r2 = r2_score(y_train, train_pred)
@@ -550,6 +559,91 @@ def get_next_trading_day(last_date):
         next_day += timedelta(days=1)
     return next_day
 
+def generate_future_dates(last_date, days=252):
+    """Generate future trading dates for the next year"""
+    future_dates = []
+    current_date = last_date + timedelta(days=1)
+    while len(future_dates) < days:
+        if current_date.weekday() < 5:  # Only weekdays
+            future_dates.append(current_date)
+        current_date += timedelta(days=1)
+    return future_dates
+
+def predict_future_prices(model, last_data, features, days=252):
+    """Predict future prices for the next year"""
+    try:
+        future_dates = generate_future_dates(last_data.index[-1], days)
+        predictions = []
+        current_data = last_data.copy()
+        
+        for date in future_dates:
+            # Prepare features for prediction
+            X_pred = current_data[features].iloc[-1:].copy()
+            
+            # Make prediction
+            pred_price = model.predict(X_pred)[0]
+            predictions.append(pred_price)
+            
+            # Update current data for next prediction
+            new_row = current_data.iloc[-1:].copy()
+            new_row.index = [date]
+            new_row['Close'] = pred_price
+            new_row['Open'] = pred_price
+            new_row['High'] = pred_price
+            new_row['Low'] = pred_price
+            
+            # Update features
+            new_row['Returns'] = (pred_price / current_data['Close'].iloc[-1]) - 1
+            new_row['Log_Returns'] = np.log(pred_price / current_data['Close'].iloc[-1])
+            new_row['SMA_20'] = current_data['Close'].iloc[-19:].mean()
+            new_row['SMA_50'] = current_data['Close'].iloc[-49:].mean()
+            new_row['SMA_200'] = current_data['Close'].iloc[-199:].mean()
+            new_row['Volume'] = current_data['Volume'].iloc[-20:].mean()
+            new_row['Volume_MA'] = current_data['Volume'].iloc[-20:].mean()
+            new_row['Volume_Ratio'] = 1.0
+            new_row['Momentum'] = pred_price - current_data['Close'].iloc[-10]
+            new_row['Volatility'] = current_data['Returns'].iloc[-20:].std()
+            
+            current_data = pd.concat([current_data, new_row])
+        
+        return pd.Series(predictions, index=future_dates)
+        
+    except Exception as e:
+        logger.error(f"Error in predict_future_prices: {str(e)}", exc_info=True)
+        st.error(f"Error predicting future prices: {str(e)}")
+        return None
+
+def plot_predictions(historical_data, predictions):
+    """Create an interactive plot of historical and predicted prices"""
+    fig = go.Figure()
+    
+    # Plot historical data
+    fig.add_trace(go.Scatter(
+        x=historical_data.index,
+        y=historical_data['Close'],
+        name='Historical Prices',
+        line=dict(color='blue')
+    ))
+    
+    # Plot predictions
+    fig.add_trace(go.Scatter(
+        x=predictions.index,
+        y=predictions,
+        name='Predicted Prices',
+        line=dict(color='red', dash='dash')
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title='Stock Price Prediction',
+        xaxis_title='Date',
+        yaxis_title='Price',
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    return fig
+
 def main():
     """Main function with improved error handling"""
     try:
@@ -607,7 +701,7 @@ def main():
                 return
                 
             # Prepare data
-            X, y, data = prepare_data(data)
+            X, y, processed_data = prepare_data(data)
             if X is None or y is None:
                 st.error("Error preparing data for analysis")
                 return
@@ -618,126 +712,52 @@ def main():
                 st.error("Error training prediction model")
                 return
                 
-            # Make prediction
-            last_data = X.iloc[-1:].copy()
-            prediction = model.predict(last_data)[0]
-            current_price = data['Close'].iloc[-1]
-            predicted_price = current_price * (1 + prediction)
+            # Make predictions
+            features = X.columns.tolist()
+            predictions = predict_future_prices(model, processed_data, features)
             
-            # Display prediction
-            st.markdown('<div class="prediction-header"><h2>Price Prediction</h2></div>', unsafe_allow_html=True)
-            
-            # Display prediction date
-            next_trading_day = get_next_trading_day(data.index[-1])
-            st.markdown(f'<div class="info-box">Prediction is for {next_trading_day.strftime("%Y-%m-%d")}</div>', unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Current Price", f"${current_price:.2f}")
-            with col2:
-                st.metric("Predicted Price", f"${predicted_price:.2f}")
-            with col3:
-                st.metric("Predicted Change", f"{prediction:.2%}")
-            
-            # Model Performance Analysis
-            st.markdown('<div class="prediction-header"><h2>Model Performance Analysis</h2></div>', unsafe_allow_html=True)
-            
-            # Display model fit metrics
-            st.markdown("### Model Fit Metrics")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Training R² Score", f"{train_r2:.2%}")
-            with col2:
-                st.metric("Test R² Score", f"{test_r2:.2%}")
-            
-            # Display prediction accuracy metrics
-            st.markdown("### Prediction Accuracy (Last 30 Days)")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Mean Absolute Error", f"${train_rmse:.2f}")
-            with col2:
-                st.metric("Mean Absolute Percentage Error", f"{test_rmse:.2f}%")
-            
-            # Plot actual vs predicted prices
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            fig = go.Figure()
-            
-            fig.add_trace(go.Scatter(
-                x=data.index[-30:],
-                y=data['Close'][-30:],
-                name='Actual Price',
-                line=dict(color='#1E88E5', width=2)
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=data.index[-30:],
-                y=model.predict(X[-30:]),
-                name='Predicted Price',
-                line=dict(color='#FFA726', width=2, dash='dash')
-            ))
-            
-            fig.update_layout(
-                title='Actual vs Predicted Prices (Last 30 Days)',
-                xaxis_title='Date',
-                yaxis_title='Price ($)',
-                hovermode='x unified',
-                template='plotly_white',
-                showlegend=True,
-                legend=dict(
-                    yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=0.01
+            if predictions is not None:
+                # Display metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Training RMSE", f"${train_rmse:.2f}")
+                    st.metric("Training R²", f"{train_r2:.2f}")
+                with col2:
+                    st.metric("Testing RMSE", f"${test_rmse:.2f}")
+                    st.metric("Testing R²", f"{test_r2:.2f}")
+                
+                # Plot predictions
+                fig = plot_predictions(data, predictions)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Display prediction details
+                st.subheader("Prediction Details")
+                last_price = data['Close'].iloc[-1]
+                predicted_price = predictions.iloc[-1]
+                price_change = predicted_price - last_price
+                percent_change = (price_change / last_price) * 100
+                
+                st.metric(
+                    "Predicted Price in 1 Year",
+                    f"${predicted_price:.2f}",
+                    f"{percent_change:+.2f}%"
                 )
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Feature Importance
-            st.markdown('<div class="prediction-header"><h2>Feature Importance</h2></div>', unsafe_allow_html=True)
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            feature_importance = pd.DataFrame({
-                'Feature': X.columns,
-                'Importance': model.feature_importances_
-            }).sort_values('Importance', ascending=False)
-            
-            fig = px.bar(
-                feature_importance,
-                x='Importance',
-                y='Feature',
-                orientation='h',
-                title='Feature Importance in Price Prediction',
-                color='Importance',
-                color_continuous_scale='Viridis'
-            )
-            
-            fig.update_layout(
-                template='plotly_white',
-                showlegend=False,
-                xaxis_title='Importance Score',
-                yaxis_title='Feature'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Display financial metrics
-            st.markdown('<div class="prediction-header"><h2>Financial Analysis</h2></div>', unsafe_allow_html=True)
-            
-            # Create tabs for financial statements
-            tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
-            
-            with tab1:
+                
+                # Display prediction table
+                st.subheader("Monthly Predictions")
+                monthly_predictions = predictions.resample('M').last()
+                monthly_predictions = pd.DataFrame({
+                    'Predicted Price': monthly_predictions,
+                    'Month': monthly_predictions.index.strftime('%B %Y')
+                })
+                st.dataframe(monthly_predictions)
+                
+                # Display financial metrics
                 display_financial_metrics(ticker, selected_years * 4, statement_type="income")
-            with tab2:
-                display_financial_metrics(ticker, selected_years * 4, statement_type="balance")
-            with tab3:
-                display_financial_metrics(ticker, selected_years * 4, statement_type="cash")
-            
-            # Add attribution
-            add_attribution()
-            
+                
+                # Add attribution
+                add_attribution()
+                
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         st.info("Please try again or contact support if the issue persists.")
