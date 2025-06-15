@@ -1,10 +1,9 @@
 streamlit
 pandas
 numpy
-yfinance
+yfinance==0.2.28
 plotly
 scikit-learn
-peewee
 pyinstaller>=6.4.0
 fastapi
 uvicorn
