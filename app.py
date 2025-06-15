@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import requests
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
@@ -98,11 +98,15 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data with improved error handling"""
+    """Get historical stock data using direct API calls"""
     try:
         # Calculate date range (20 years ago from today)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=20*365)  # 20 years
+        
+        # Convert dates to timestamps
+        start_timestamp = int(start_date.timestamp())
+        end_timestamp = int(end_date.timestamp())
         
         # Fetch historical data with retry logic
         max_retries = 3
@@ -110,15 +114,55 @@ def get_stock_data(ticker):
         
         for attempt in range(max_retries):
             try:
-                # Try to get historical data
-                data = yf.download(ticker, start=start_date, end=end_date, progress=False)
-                if not data.empty:
-                    st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
-                    return data
+                # Construct Yahoo Finance API URL
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_timestamp}&period2={end_timestamp}&interval=1d"
+                
+                # Add headers to mimic browser request
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                
+                # Make the request
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()  # Raise an exception for bad status codes
+                
+                # Parse the JSON response
+                data = response.json()
+                
+                if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+                    result = data['chart']['result'][0]
+                    
+                    # Extract timestamps and prices
+                    timestamps = result['timestamp']
+                    quotes = result['indicators']['quote'][0]
+                    
+                    # Create DataFrame
+                    df = pd.DataFrame({
+                        'Date': pd.to_datetime(timestamps, unit='s'),
+                        'Open': quotes['open'],
+                        'High': quotes['high'],
+                        'Low': quotes['low'],
+                        'Close': quotes['close'],
+                        'Volume': quotes['volume']
+                    })
+                    
+                    # Set Date as index
+                    df.set_index('Date', inplace=True)
+                    
+                    # Drop rows with NaN values
+                    df.dropna(inplace=True)
+                    
+                    if not df.empty:
+                        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
+                        return df
+                    else:
+                        st.error(f"No valid data found for {ticker}. Please check the symbol or try again later.")
+                        return None
                 else:
-                    st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
+                    st.error(f"No data found for {ticker}. Please check the symbol or try again later.")
                     return None
-            except Exception as e:
+                    
+            except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
                     # If we have retries left, wait and try again
                     time.sleep(retry_delay)
@@ -127,6 +171,9 @@ def get_stock_data(ticker):
                 else:
                     st.error(f"Error fetching data for {ticker}: {str(e)}")
                     return None
+            except Exception as e:
+                st.error(f"Error processing data for {ticker}: {str(e)}")
+                return None
         
         return None
     except Exception as e:
