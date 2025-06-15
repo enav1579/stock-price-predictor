@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+import numpy as np
+import pandas_datareader as pdr
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, timedelta
-import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
 import time
 from functools import wraps
+from sklearn.preprocessing import MinMaxScaler
 
 # Set page configuration - must be the first Streamlit command
 st.set_page_config(
@@ -97,20 +98,20 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data with improved error handling and rate limiting"""
+    """Get historical stock data using pandas_datareader"""
     try:
         # Calculate date range (20 years ago from today)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=20*365)  # 20 years
         
-        # Fetch historical data directly first
+        # Fetch historical data with retry logic
         max_retries = 3
         retry_delay = 2  # seconds
         
         for attempt in range(max_retries):
             try:
-                # Try to get historical data first
-                data = yf.download(ticker, period="20y", progress=False)
+                # Try to get historical data
+                data = pdr.data.get_data_yahoo(ticker, start=start_date, end=end_date)
                 if not data.empty:
                     st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
                     return data
@@ -118,8 +119,8 @@ def get_stock_data(ticker):
                     st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
                     return None
             except Exception as e:
-                if "429" in str(e) and attempt < max_retries - 1:
-                    # If we hit rate limit and have retries left, wait and try again
+                if attempt < max_retries - 1:
+                    # If we have retries left, wait and try again
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                     continue
@@ -442,29 +443,14 @@ def get_next_trading_day(last_date):
 def get_financial_data(ticker):
     """Fetch and combine financial statements"""
     try:
-        stock = yf.Ticker(ticker)
+        stock = pdr.data.get_data_yahoo(ticker)
         
-        if not stock.info:
-            st.error(f"Invalid ticker symbol: {ticker}")
+        if not stock.empty:
+            st.info(f"Showing 20 years of historical data from {stock.index[0].strftime('%Y-%m-%d')}")
+            return stock
+        else:
+            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
-            
-        # Fetch financial statements
-        income_stmt = stock.financials
-        balance_sheet = stock.balance_sheet
-        cash_flow = stock.cashflow
-        
-        if income_stmt.empty or balance_sheet.empty or cash_flow.empty:
-            st.warning("Financial data not available for this ticker.")
-            return None
-            
-        # Combine all financial statements
-        financial_data = pd.concat([
-            income_stmt,
-            balance_sheet,
-            cash_flow
-        ])
-        
-        return financial_data
         
     except Exception as e:
         st.error(f"Error fetching financial data: {str(e)}")

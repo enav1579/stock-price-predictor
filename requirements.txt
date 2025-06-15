@@ -1,7 +1,7 @@
 streamlit==1.45.1
 pandas==2.3.0
 numpy==2.3.0
-yfinance==0.1.87
+pandas_datareader==0.10.0
 plotly==6.1.2
 scikit-learn==1.7.0
 pyinstaller>=6.4.0
