@@ -432,12 +432,17 @@ def get_financial_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         
-        if stock.info:
-            st.info(f"Showing 20 years of historical data from {stock.info['firstTradeDate'].strftime('%Y-%m-%d')}")
-            return stock.history(period="max")
-        else:
+        # Get historical data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=20*365)  # 20 years
+        data = stock.history(start=start_date, end=end_date)
+        
+        if data.empty:
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
+            
+        st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
+        return data
         
     except Exception as e:
         st.error(f"Error fetching financial data: {str(e)}")
