@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pandas_datareader as pdr
+import yfinance as yf
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
@@ -98,7 +98,7 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Get historical stock data using pandas_datareader"""
+    """Get historical stock data with improved error handling"""
     try:
         # Calculate date range (20 years ago from today)
         end_date = datetime.now()
@@ -111,7 +111,7 @@ def get_stock_data(ticker):
         for attempt in range(max_retries):
             try:
                 # Try to get historical data
-                data = pdr.data.get_data_yahoo(ticker, start=start_date, end=end_date)
+                data = yf.download(ticker, start=start_date, end=end_date, progress=False)
                 if not data.empty:
                     st.info(f"Showing 20 years of historical data from {start_date.strftime('%Y-%m-%d')}")
                     return data
@@ -443,11 +443,11 @@ def get_next_trading_day(last_date):
 def get_financial_data(ticker):
     """Fetch and combine financial statements"""
     try:
-        stock = pdr.data.get_data_yahoo(ticker)
+        stock = yf.Ticker(ticker)
         
-        if not stock.empty:
-            st.info(f"Showing 20 years of historical data from {stock.index[0].strftime('%Y-%m-%d')}")
-            return stock
+        if stock.info:
+            st.info(f"Showing 20 years of historical data from {stock.info['firstTradeDate'].strftime('%Y-%m-%d')}")
+            return stock.history(period="max")
         else:
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
