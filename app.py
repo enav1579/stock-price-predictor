@@ -115,6 +115,7 @@ def get_stock_data(ticker):
         
         logger.debug(f"Date range: {start_date} to {end_date}")
         
+        # Fetch data with explicit date range
         data = stock.history(start=start_date.strftime('%Y-%m-%d'), 
                            end=end_date.strftime('%Y-%m-%d'))
         
@@ -123,12 +124,17 @@ def get_stock_data(ticker):
             st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
             return None
             
-        # Convert index to datetime
-        data.index = pd.to_datetime(data.index)
+        # Ensure index is datetime
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index)
+        
+        # Sort by date
         data = data.sort_index()
         
         logger.debug(f"Data shape: {data.shape}")
         logger.debug(f"Data columns: {data.columns.tolist()}")
+        logger.debug(f"Data index type: {type(data.index)}")
+        logger.debug(f"First few rows:\n{data.head()}")
         
         return data
         
@@ -262,7 +268,7 @@ def prepare_data(data):
         logger.debug("Starting data preparation")
         if data is None or data.empty:
             logger.error("No data available for preparation")
-            return None, None
+            return None, None, None
             
         # Create features
         df = data.copy()
