@@ -262,94 +262,91 @@ def calculate_indicators(data):
         return data
 
 def prepare_data(data):
-    """Prepare data for model training."""
-    if data is None or data.empty:
-        logging.error("No data available for preparation")
-        return None, None
-        
+    """Prepare data for model training"""
     try:
         logging.debug("Starting data preparation")
         
-        # Create features
-        df = data.copy()
-        
         # Calculate returns
-        df['Returns'] = df['Close'].pct_change()
-        df['Log_Returns'] = np.log(df['Close']/df['Close'].shift(1))
+        data['Returns'] = data['Close'].pct_change()
+        data['Log_Returns'] = np.log(data['Close'] / data['Close'].shift(1))
         
-        # Calculate volatility
-        df['Volatility'] = df['Returns'].rolling(window=20).std()
+        # Calculate volatility (20-day rolling standard deviation of returns)
+        data['Volatility'] = data['Returns'].rolling(window=20).std()
         
         # Calculate moving averages
-        df['SMA_20'] = df['Close'].rolling(window=20).mean()
-        df['SMA_50'] = df['Close'].rolling(window=50).mean()
-        df['SMA_200'] = df['Close'].rolling(window=200).mean()
+        data['SMA_20'] = data['Close'].rolling(window=20).mean()
+        data['SMA_50'] = data['Close'].rolling(window=50).mean()
+        data['SMA_200'] = data['Close'].rolling(window=200).mean()
+        
+        # Calculate EMAs
+        data['EMA_12'] = data['Close'].ewm(span=12, adjust=False).mean()
+        data['EMA_26'] = data['Close'].ewm(span=26, adjust=False).mean()
         
         # Calculate price to MA ratios
-        df['Price_to_SMA20'] = df['Close'] / df['SMA_20']
-        df['Price_to_SMA50'] = df['Close'] / df['SMA_50']
-        df['Price_to_SMA200'] = df['Close'] / df['SMA_200']
+        data['Price_to_SMA20'] = data['Close'] / data['SMA_20']
+        data['Price_to_SMA50'] = data['Close'] / data['SMA_50']
+        data['Price_to_SMA200'] = data['Close'] / data['SMA_200']
         
         # Calculate RSI
-        delta = df['Close'].diff()
+        delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
+        data['RSI'] = 100 - (100 / (1 + rs))
         
         # Calculate MACD
-        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        data['MACD'] = data['EMA_12'] - data['EMA_26']
+        data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+        data['MACD_Hist'] = data['MACD'] - data['MACD_Signal']
         
         # Calculate Bollinger Bands
-        df['BB_Middle'] = df['Close'].rolling(window=20).mean()
-        df['BB_Upper'] = df['BB_Middle'] + 2*df['Close'].rolling(window=20).std()
-        df['BB_Lower'] = df['BB_Middle'] - 2*df['Close'].rolling(window=20).std()
+        data['BB_Middle'] = data['Close'].rolling(window=20).mean()
+        data['BB_Upper'] = data['BB_Middle'] + 2 * data['Close'].rolling(window=20).std()
+        data['BB_Lower'] = data['BB_Middle'] - 2 * data['Close'].rolling(window=20).std()
         
         # Calculate volume indicators
-        df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
-        df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
-        df['Volume_Change'] = df['Volume'].pct_change()
+        data['Volume_MA'] = data['Volume'].rolling(window=20).mean()
+        data['Volume_Ratio'] = data['Volume'] / data['Volume_MA']
+        data['Volume_Change'] = data['Volume'].pct_change()
         
         # Calculate price momentum
-        df['Momentum'] = df['Close'] - df['Close'].shift(10)
-        df['Rate_of_Change'] = df['Close'].pct_change(periods=10)
+        data['Momentum'] = data['Close'] - data['Close'].shift(10)
+        data['Rate_of_Change'] = data['Close'].pct_change(periods=10)
         
         # Calculate additional features
-        df['High_Low_Ratio'] = df['High'] / df['Low']
-        df['Close_Open_Ratio'] = df['Close'] / df['Open']
-        df['Price_Range'] = df['High'] - df['Low']
-        df['Price_Range_Pct'] = df['Price_Range'] / df['Close']
-        
-        # Create target variable (next day's close price)
-        df['Target'] = df['Close'].shift(-1)
+        data['High_Low_Ratio'] = data['High'] / data['Low']
+        data['Close_Open_Ratio'] = data['Close'] / data['Open']
+        data['Price_Range'] = data['High'] - data['Low']
+        data['Price_Range_Pct'] = data['Price_Range'] / data['Open']
         
         # Drop NaN values
-        df = df.dropna()
-        logging.debug(f"Data shape after dropping NaN: {df.shape}")
+        data = data.dropna()
+        logging.debug(f"Data shape after dropping NaN: {data.shape}")
+        
+        # Create target variable (next day's closing price)
+        y = data['Close'].shift(-1)
         
         # Select features for model
         feature_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Returns', 'Log_Returns', 
                          'Volatility', 'SMA_20', 'SMA_50', 'SMA_200', 'EMA_12', 'EMA_26',
-                         'Price_to_SMA20', 'Price_to_SMA50', 'Price_to_SMA200', 'RSI', 'MACD',
-                         'MACD_Signal', 'MACD_Hist', 'BB_Middle', 'BB_Upper', 'BB_Lower',
+                         'Price_to_SMA20', 'Price_to_SMA50', 'Price_to_SMA200', 'RSI',
+                         'MACD', 'MACD_Signal', 'MACD_Hist', 'BB_Middle', 'BB_Upper', 'BB_Lower',
                          'Volume_MA', 'Volume_Ratio', 'Volume_Change', 'Momentum', 'Rate_of_Change',
                          'High_Low_Ratio', 'Close_Open_Ratio', 'Price_Range', 'Price_Range_Pct']
         
-        X = df[feature_columns]
-        y = df['Target']
+        X = data[feature_columns]
         
-        logging.debug(f"Selected features: {feature_columns}")
+        # Drop the last row since we don't have the next day's price
+        X = X[:-1]
+        y = y[:-1]
+        
         logging.debug(f"Final data shapes - X: {X.shape}, y: {y.shape}")
         
         return X, y
         
     except Exception as e:
         logging.error(f"Error preparing data: {str(e)}")
-        return None, None
+        raise
 
 def train_model(X, y):
     """Train the model"""
