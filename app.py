@@ -104,48 +104,42 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
         return pd.Series(index=prices.index), pd.Series(index=prices.index)
 
 def get_stock_data(ticker):
-    """Fetch historical stock data"""
+    """Fetch stock data for the given ticker."""
     try:
-        logger.debug(f"Fetching data for ticker: {ticker}")
-        stock = yf.Ticker(ticker)
-        
-        # Get historical data for the past 5 years
+        logging.debug(f"Fetching data for ticker: {ticker}")
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=5*365)
+        start_date = end_date - timedelta(days=5*365)  # 5 years of data
+        logging.debug(f"Date range: {start_date} to {end_date}")
         
-        logger.debug(f"Date range: {start_date} to {end_date}")
-        
-        # Fetch data with explicit date range
-        data = stock.history(start=start_date.strftime('%Y-%m-%d'), 
-                           end=end_date.strftime('%Y-%m-%d'))
+        # Fetch data using yfinance
+        stock = yf.Ticker(ticker)
+        data = stock.history(start=start_date, end=end_date)
         
         if data.empty:
-            logger.error(f"No data found for {ticker}")
-            st.error(f"No historical data found for {ticker}. Please check the symbol or try again later.")
+            logging.error(f"No data available for ticker {ticker}")
             return None
             
+        logging.debug(f"Data shape: {data.shape}")
+        logging.debug(f"Data columns: {data.columns.tolist()}")
+        logging.debug(f"Data index type: {type(data.index)}")
+        
         # Ensure index is datetime
         if not isinstance(data.index, pd.DatetimeIndex):
             try:
-                data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
+                data.index = pd.to_datetime(data.index)
+                logging.debug("Successfully converted index to datetime")
             except Exception as e:
-                logger.error(f"Error converting index to datetime: {str(e)}")
-                st.error(f"Error processing dates: {str(e)}")
+                logging.error(f"Error converting index to datetime: {str(e)}")
                 return None
         
         # Sort by date
         data = data.sort_index()
-        
-        logger.debug(f"Data shape: {data.shape}")
-        logger.debug(f"Data columns: {data.columns.tolist()}")
-        logger.debug(f"Data index type: {type(data.index)}")
-        logger.debug(f"First few rows:\n{data.head()}")
+        logging.debug(f"Data after sorting:\n{data.head()}")
         
         return data
         
     except Exception as e:
-        logger.error(f"Error in get_stock_data: {str(e)}", exc_info=True)
-        st.error(f"Error fetching stock data: {str(e)}")
+        logging.error(f"Error fetching data for {ticker}: {str(e)}")
         return None
 
 def get_financial_data(ticker):
@@ -268,59 +262,94 @@ def calculate_indicators(data):
         return data
 
 def prepare_data(data):
-    """Prepare data for model training"""
+    """Prepare data for model training."""
+    if data is None or data.empty:
+        logging.error("No data available for preparation")
+        return None, None
+        
     try:
-        logger.debug("Starting data preparation")
-        if data is None or data.empty:
-            logger.error("No data available for preparation")
-            return None, None, None
-            
+        logging.debug("Starting data preparation")
+        
         # Create features
         df = data.copy()
         
-        # Basic price features
+        # Calculate returns
         df['Returns'] = df['Close'].pct_change()
         df['Log_Returns'] = np.log(df['Close']/df['Close'].shift(1))
         
-        # Moving averages
+        # Calculate volatility
+        df['Volatility'] = df['Returns'].rolling(window=20).std()
+        
+        # Calculate moving averages
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_200'] = df['Close'].rolling(window=200).mean()
         
-        # Volatility
-        df['Volatility'] = df['Returns'].rolling(window=20).std()
+        # Calculate price to MA ratios
+        df['Price_to_SMA20'] = df['Close'] / df['SMA_20']
+        df['Price_to_SMA50'] = df['Close'] / df['SMA_50']
+        df['Price_to_SMA200'] = df['Close'] / df['SMA_200']
         
-        # Volume features
+        # Calculate RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # Calculate MACD
+        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        
+        # Calculate Bollinger Bands
+        df['BB_Middle'] = df['Close'].rolling(window=20).mean()
+        df['BB_Upper'] = df['BB_Middle'] + 2*df['Close'].rolling(window=20).std()
+        df['BB_Lower'] = df['BB_Middle'] - 2*df['Close'].rolling(window=20).std()
+        
+        # Calculate volume indicators
         df['Volume_MA'] = df['Volume'].rolling(window=20).mean()
         df['Volume_Ratio'] = df['Volume'] / df['Volume_MA']
+        df['Volume_Change'] = df['Volume'].pct_change()
         
-        # Price momentum
+        # Calculate price momentum
         df['Momentum'] = df['Close'] - df['Close'].shift(10)
+        df['Rate_of_Change'] = df['Close'].pct_change(periods=10)
         
-        # Target variable (next day's closing price)
+        # Calculate additional features
+        df['High_Low_Ratio'] = df['High'] / df['Low']
+        df['Close_Open_Ratio'] = df['Close'] / df['Open']
+        df['Price_Range'] = df['High'] - df['Low']
+        df['Price_Range_Pct'] = df['Price_Range'] / df['Close']
+        
+        # Create target variable (next day's close price)
         df['Target'] = df['Close'].shift(-1)
         
-        # Drop rows with NaN values
+        # Drop NaN values
         df = df.dropna()
+        logging.debug(f"Data shape after dropping NaN: {df.shape}")
         
-        # Select features for training
-        features = [
-            'Open', 'High', 'Low', 'Close', 'Volume',
-            'Returns', 'Log_Returns', 'Volatility',
-            'SMA_20', 'SMA_50', 'SMA_200',
-            'Volume_MA', 'Volume_Ratio', 'Momentum'
-        ]
+        # Select features for model
+        feature_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Returns', 'Log_Returns', 
+                         'Volatility', 'SMA_20', 'SMA_50', 'SMA_200', 'EMA_12', 'EMA_26',
+                         'Price_to_SMA20', 'Price_to_SMA50', 'Price_to_SMA200', 'RSI', 'MACD',
+                         'MACD_Signal', 'MACD_Hist', 'BB_Middle', 'BB_Upper', 'BB_Lower',
+                         'Volume_MA', 'Volume_Ratio', 'Volume_Change', 'Momentum', 'Rate_of_Change',
+                         'High_Low_Ratio', 'Close_Open_Ratio', 'Price_Range', 'Price_Range_Pct']
         
-        X = df[features]
+        X = df[feature_columns]
         y = df['Target']
         
-        logger.debug(f"Final data shapes - X: {X.shape}, y: {y.shape}")
-        return X, y, df
+        logging.debug(f"Selected features: {feature_columns}")
+        logging.debug(f"Final data shapes - X: {X.shape}, y: {y.shape}")
+        
+        return X, y
         
     except Exception as e:
-        logger.error(f"Error in prepare_data: {str(e)}", exc_info=True)
-        st.error(f"Error preparing data: {str(e)}")
-        return None, None, None
+        logging.error(f"Error preparing data: {str(e)}")
+        return None, None
 
 def train_model(X, y):
     """Train the model"""
@@ -719,7 +748,7 @@ def main():
                 return
                 
             # Prepare data
-            X, y, processed_data = prepare_data(data)
+            X, y = prepare_data(data)
             if X is None or y is None:
                 st.error("Error preparing data for analysis")
                 return
@@ -732,7 +761,7 @@ def main():
                 
             # Make predictions
             features = X.columns.tolist()
-            predictions = predict_future_prices(model, processed_data, features)
+            predictions = predict_future_prices(model, data, features)
             
             if predictions is not None:
                 # Display metrics
