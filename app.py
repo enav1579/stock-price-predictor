@@ -126,7 +126,12 @@ def get_stock_data(ticker):
             
         # Ensure index is datetime
         if not isinstance(data.index, pd.DatetimeIndex):
-            data.index = pd.to_datetime(data.index)
+            try:
+                data.index = pd.to_datetime(data.index, format='%Y-%m-%d')
+            except Exception as e:
+                logger.error(f"Error converting index to datetime: {str(e)}")
+                st.error(f"Error processing dates: {str(e)}")
+                return None
         
         # Sort by date
         data = data.sort_index()
@@ -567,18 +572,25 @@ def get_next_trading_day(last_date):
 
 def generate_future_dates(last_date, days=252):
     """Generate future trading dates for the next year"""
-    future_dates = []
-    current_date = last_date + timedelta(days=1)
-    while len(future_dates) < days:
-        if current_date.weekday() < 5:  # Only weekdays
-            future_dates.append(current_date)
-        current_date += timedelta(days=1)
-    return future_dates
+    try:
+        future_dates = []
+        current_date = pd.to_datetime(last_date) + pd.Timedelta(days=1)
+        while len(future_dates) < days:
+            if current_date.weekday() < 5:  # Only weekdays
+                future_dates.append(current_date)
+            current_date += pd.Timedelta(days=1)
+        return pd.DatetimeIndex(future_dates)
+    except Exception as e:
+        logger.error(f"Error generating future dates: {str(e)}", exc_info=True)
+        return None
 
 def predict_future_prices(model, last_data, features, days=252):
     """Predict future prices for the next year"""
     try:
         future_dates = generate_future_dates(last_data.index[-1], days)
+        if future_dates is None:
+            return None
+            
         predictions = []
         current_data = last_data.copy()
         
